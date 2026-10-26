@@ -34,6 +34,7 @@ select{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);b
 .explain{margin-top:12px;padding:12px 14px;border-left:4px solid var(--accent);background:var(--bg);border-radius:8px}
 .explain b{display:block;margin-bottom:4px}
 .hide{margin:12px 0 0;color:var(--muted);font-size:.95rem}
+.card.reading{outline:3px solid var(--accent)}
 .hidden{display:none}
 </style>
 </head>
@@ -50,6 +51,11 @@ select{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);b
     <select id="order"><option value="rand">Ngẫu nhiên</option><option value="seq">Theo thứ tự trong đề</option></select>
   </label>
   <label><input type="checkbox" id="shuf" checked> Đảo vị trí đáp án</label>
+  <label><input type="checkbox" id="autoRead"> 🔊 Tự động đọc câu hỏi và đáp án khi làm bài</label>
+  <label>Tốc độ đọc
+    <select id="rate"><option value="0.8">Chậm</option><option value="1" selected>Bình thường</option><option value="1.2">Nhanh</option><option value="1.5">Rất nhanh</option></select>
+  </label>
+  <div class="muted hidden" id="noVoice">⚠ Thiết bị này chưa có giọng đọc tiếng Việt, chức năng nghe có thể đọc sai giọng. Trên máy tính nên dùng trình duyệt Edge; trên điện thoại thì cài thêm giọng tiếng Việt trong phần cài đặt chuyển văn bản thành giọng nói.</div>
   <div class="row" style="margin-top:12px">
     <button class="primary" id="start">Bắt đầu</button>
     <button id="redo">Ôn lại câu đã sai (<span id="nwrong">0</span>)</button>
@@ -72,6 +78,7 @@ select{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);b
   </div>
   <div class="row">
     <button id="quit">Kết thúc</button>
+    <button id="speakQ">🔊 Nghe</button>
     <button class="primary" id="next" disabled>Câu tiếp →</button>
   </div>
 </section>
@@ -81,7 +88,10 @@ select{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);b
     <input id="search" type="search" placeholder="Tìm câu hỏi…" style="flex:1;font:inherit;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text)">
     <button id="studyBack">← Về</button>
   </div>
-  <div class="muted" id="studyCount" style="margin-top:8px"></div>
+  <div class="top">
+    <span class="muted" id="studyCount"></span>
+    <button id="playAll">▶ Nghe liên tục</button>
+  </div>
   <div id="studyList"></div>
 </section>
 
@@ -108,7 +118,34 @@ const store = {
 let wrongAll = store.get('ktmt_wrong'), hidden = store.get('ktmt_hidden'), list = [], i = 0, correct = 0, wrongNow = [], answered = false;
 
 function shuffle(a){ a = a.slice(); for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } return a; }
-function show(id){ for (const s of ['home','quiz','result','study']) $(s).classList.toggle('hidden', s !== id); window.scrollTo(0, 0); }
+// Text-to-speech via the browser's built-in voices; a new say() or stopSpeak() cancels the running one.
+let ttsToken = 0, playing = false;
+const viVoice = () => window.speechSynthesis?.getVoices().find(v => v.lang.replace('_', '-').toLowerCase().startsWith('vi'));
+function stopSpeak(){ ttsToken++; window.speechSynthesis?.cancel(); }
+async function say(parts){
+  if (!window.speechSynthesis) return false;
+  const my = ++ttsToken; speechSynthesis.cancel();
+  for (const p of parts) {
+    if (my !== ttsToken) return false;
+    await new Promise(res => {
+      const u = new SpeechSynthesisUtterance(p);
+      u.lang = 'vi-VN'; const v = viVoice(); if (v) u.voice = v;
+      u.rate = +$('rate').value; u.onend = u.onerror = res;
+      speechSynthesis.speak(u);
+    });
+  }
+  return my === ttsToken;
+}
+function checkVoice(){
+  const s = window.speechSynthesis, loaded = s && s.getVoices().length;  // voices load async; wait before warning
+  $('noVoice').classList.toggle('hidden', !(!s || (loaded && !viVoice())));
+}
+if (window.speechSynthesis) speechSynthesis.onvoiceschanged = checkVoice;
+const studyParts = q => [`Câu ${q.n}. ${q.q}`, ...q.o.map((o, k) => `${L[k]}. ${o}`),
+  'Đáp án đúng: ' + q.a.map(k => `${L[k]}. ${q.o[k]}`).join(', '), 'Giải thích. ' + q.e];
+function quizQuestionParts(){ const { q, order } = list[i]; return [q.q, ...order.map((oi, k) => `${L[k]}. ${q.o[oi]}`)]; }
+
+function show(id){ stopSpeak(); for (const s of ['home','quiz','result','study']) $(s).classList.toggle('hidden', s !== id); window.scrollTo(0, 0); }
 const visible = () => DATA.filter(q => !hidden.has(q.n));
 function refreshHome(){
   const wrongVisible = visible().filter(q => wrongAll.has(q.n)).length;
@@ -147,6 +184,7 @@ function render(){
   $('hideQ').checked = hidden.has(q.n);
   $('next').disabled = true;
   $('next').textContent = i + 1 < list.length ? 'Câu tiếp →' : 'Xem kết quả';
+  if ($('autoRead').checked) say(quizQuestionParts()); else stopSpeak();
 }
 function pick(oi){
   if (answered) return;
@@ -165,6 +203,10 @@ function pick(oi){
   $('live').textContent = `Đúng ${correct}/${i + 1}`;
   $('next').disabled = false;
   $('next').focus();
+  if ($('autoRead').checked) {
+    const k = list[i].order.indexOf(q.a[0]);
+    say([ok ? 'Chính xác.' : 'Sai rồi.', `Đáp án đúng là ${L[k]}. ${q.o[q.a[0]]}`, q.e]);
+  }
 }
 function next(){ if (!answered) return; if (++i < list.length) render(); else finish(); }
 function finish(){
@@ -200,8 +242,12 @@ function renderStudy(){
   $('studyCount').textContent = `${qs.length} câu`;
   const list = $('studyList'); list.innerHTML = '';
   for (const q of qs) {
-    const c = document.createElement('div'); c.className = 'card';
-    const n = document.createElement('div'); n.className = 'muted'; n.textContent = `Câu ${q.n}`;
+    const c = document.createElement('div'); c.className = 'card'; c.q = q;
+    const n = document.createElement('div'); n.className = 'top';
+    const nl = document.createElement('span'); nl.className = 'muted'; nl.textContent = `Câu ${q.n}`;
+    const sb = document.createElement('button'); sb.textContent = '🔊 Nghe từ câu này'; sb.style.padding = '6px 10px';
+    sb.onclick = () => playFrom(c);
+    n.append(nl, sb);
     const t = document.createElement('div'); t.className = 'q'; t.textContent = q.q;
     c.append(n, t);
     q.o.forEach((o, k) => {
@@ -216,9 +262,26 @@ function renderStudy(){
     c.append(e); list.append(c);
   }
 }
+async function playFrom(card){
+  const cards = [...$('studyList').children];
+  stopSpeak(); playing = true; $('playAll').textContent = '⏹ Dừng nghe';
+  for (let k = cards.indexOf(card); k >= 0 && k < cards.length; k++) {
+    cards[k].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    cards[k].classList.add('reading');
+    const ok = await say(studyParts(cards[k].q));
+    cards[k].classList.remove('reading');
+    if (!ok) break;
+  }
+  playing = false; $('playAll').textContent = '▶ Nghe liên tục';
+}
+$('playAll').onclick = () => { if (playing) { stopSpeak(); } else if ($('studyList').firstChild) playFrom($('studyList').firstChild); };
 $('studyBtn').onclick = () => { renderStudy(); show('study'); };
 $('studyBack').onclick = () => { show('home'); refreshHome(); };
-$('search').oninput = renderStudy;
+$('search').oninput = () => { stopSpeak(); renderStudy(); };
+$('speakQ').onclick = () => {
+  const q = list[i].q, k = list[i].order.indexOf(q.a[0]);
+  say(answered ? [`Đáp án đúng là ${L[k]}. ${q.o[q.a[0]]}`, q.e] : quizQuestionParts());
+};
 $('next').onclick = next;
 $('quit').onclick = finish;
 $('again').onclick = () => { show('home'); refreshHome(); };
@@ -229,7 +292,7 @@ document.addEventListener('keydown', e => {
   if (k && !answered) { $('opts').children[k - 1]?.click(); }
   else if (e.key === 'Enter' && answered) { e.preventDefault(); next(); }
 });
-refreshHome();
+refreshHome(); checkVoice();
 </script>
 </body>
 </html>
