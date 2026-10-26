@@ -55,6 +55,7 @@ select{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);b
     <button id="redo">Ôn lại câu đã sai (<span id="nwrong">0</span>)</button>
   </div>
   <div class="row" style="margin-top:8px">
+    <button id="studyBtn">📖 Chế độ học (xem đáp án)</button>
     <button id="unhide">Hiện lại câu đã ẩn (<span id="nhidden">0</span>)</button>
   </div>
 </section>
@@ -73,6 +74,15 @@ select{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);b
     <button id="quit">Kết thúc</button>
     <button class="primary" id="next" disabled>Câu tiếp →</button>
   </div>
+</section>
+
+<section id="study" class="hidden">
+  <div class="top">
+    <input id="search" type="search" placeholder="Tìm câu hỏi…" style="flex:1;font:inherit;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text)">
+    <button id="studyBack">← Về</button>
+  </div>
+  <div class="muted" id="studyCount" style="margin-top:8px"></div>
+  <div id="studyList"></div>
 </section>
 
 <section id="result" class="hidden">
@@ -98,7 +108,7 @@ const store = {
 let wrongAll = store.get('ktmt_wrong'), hidden = store.get('ktmt_hidden'), list = [], i = 0, correct = 0, wrongNow = [], answered = false;
 
 function shuffle(a){ a = a.slice(); for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } return a; }
-function show(id){ for (const s of ['home','quiz','result']) $(s).classList.toggle('hidden', s !== id); window.scrollTo(0, 0); }
+function show(id){ for (const s of ['home','quiz','result','study']) $(s).classList.toggle('hidden', s !== id); window.scrollTo(0, 0); }
 const visible = () => DATA.filter(q => !hidden.has(q.n));
 function refreshHome(){
   const wrongVisible = visible().filter(q => wrongAll.has(q.n)).length;
@@ -184,6 +194,31 @@ $('start').onclick = () => {
 $('redo').onclick = () => start(shuffle(visible().filter(q => wrongAll.has(q.n))));
 $('unhide').onclick = () => { if (confirm(`Hiện lại ${hidden.size} câu đã ẩn?`)) { hidden.clear(); store.set('ktmt_hidden', hidden); refreshHome(); } };
 $('hideQ').onchange = e => { const n = list[i].q.n; e.target.checked ? hidden.add(n) : hidden.delete(n); store.set('ktmt_hidden', hidden); };
+function renderStudy(){
+  const s = $('search').value.trim().toLowerCase();
+  const qs = DATA.filter(q => !s || (q.q + ' ' + q.o.join(' ')).toLowerCase().includes(s));
+  $('studyCount').textContent = `${qs.length} câu`;
+  const list = $('studyList'); list.innerHTML = '';
+  for (const q of qs) {
+    const c = document.createElement('div'); c.className = 'card';
+    const n = document.createElement('div'); n.className = 'muted'; n.textContent = `Câu ${q.n}`;
+    const t = document.createElement('div'); t.className = 'q'; t.textContent = q.q;
+    c.append(n, t);
+    q.o.forEach((o, k) => {
+      const d = document.createElement('div');
+      d.className = 'opt' + (q.a.includes(k) ? ' ok' : '');
+      d.style.border = '1px solid var(--line)'; d.style.borderRadius = '10px';
+      d.innerHTML = `<b>${L[k]}.</b>`; d.append(o + (q.a.includes(k) ? '  ✓' : ''));
+      c.append(d);
+    });
+    const e = document.createElement('div'); e.className = 'explain';
+    e.innerHTML = '<b>Giải thích</b>'; e.append(q.e);
+    c.append(e); list.append(c);
+  }
+}
+$('studyBtn').onclick = () => { renderStudy(); show('study'); };
+$('studyBack').onclick = () => { show('home'); refreshHome(); };
+$('search').oninput = renderStudy;
 $('next').onclick = next;
 $('quit').onclick = finish;
 $('again').onclick = () => { show('home'); refreshHome(); };
